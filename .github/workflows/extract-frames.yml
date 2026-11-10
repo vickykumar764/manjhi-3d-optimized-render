@@ -1,8 +1,8 @@
 # TEMPORARY helper (delete after use): extract frames 0-9 from the speed-test-10
 # artifact so the mandatory frame-by-frame tiling check can be done visually.
-# It downloads the artifact from the speed-test run, extracts each frame as a PNG
-# with ffmpeg, and commits the PNGs to a qa-speed-test-frames branch (non-workflow
-# files, so the Actions token may push them). Created via the web UI only.
+# It downloads the artifact from the speed-test run via the REST API, extracts each
+# frame as a PNG with ffmpeg, and commits the PNGs to a qa-speed-test-frames branch
+# (non-workflow files, so the Actions token may push them). Created via the web UI only.
 name: Extract speed-test frames
 
 on:
@@ -17,12 +17,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download speed-test-10 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: speed-test-10
-          run-id: 42769884702
-          path: art
+      - name: Download speed-test-10 artifact (REST API)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/13740864109/zip" -o art.zip
+          ls -la art.zip
+          file art.zip
+          head -c 300 art.zip; echo
+          mkdir -p art
+          unzip -o art.zip -d art
+          ls -la art
 
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
