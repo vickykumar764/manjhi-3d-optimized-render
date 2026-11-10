@@ -1,0 +1,42 @@
+# TEMPORARY helper (delete after use): extract frames 0-9 from the speed-test-10
+# artifact so the mandatory frame-by-frame tiling check can be done visually.
+# It downloads the artifact from the speed-test run, extracts each frame as a PNG
+# with ffmpeg, and commits the PNGs to a qa-speed-test-frames branch (non-workflow
+# files, so the Actions token may push them). Created via the web UI only.
+name: Extract speed-test frames
+
+on:
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download speed-test-10 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: speed-test-10
+          run-id: 42769884702
+          path: art
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Extract frames 0-9
+        run: |
+          mkdir -p qa-frames
+          ffmpeg -i art/speed-test-10.mp4 -start_number 0 qa-frames/frame-%d.png
+          ls -la qa-frames
+
+      - name: Commit frames to qa branch
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git checkout -b qa-speed-test-frames
+          git add qa-frames
+          git commit -m "Speed-test frames 0-9 for tiling check"
+          git push -u origin qa-speed-test-frames
