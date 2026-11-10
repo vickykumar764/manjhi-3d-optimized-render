@@ -1,0 +1,73 @@
+# Manjhi 3D short — OPTIMIZED copy — 10-frame speed test on GitHub Actions
+# PURPOSE: measure the REAL per-frame speed of the OPTIMIZED project (540x960 WebGL buffer
+# CSS-upscaled to 1080x1920, lens blur + bloom OFF, ink + grade kept — see OPTIMIZATION_NOTES.md)
+# on an Actions runner BEFORE committing to the full 1,254-frame render. The UNOPTIMIZED Remotion
+# project measured 6.1 s/frame here (10-frame re-run 2026-11-10 ~11:13 IST, run 42763866228;
+# first run 6.8, failed only on a missing ffprobe).
+# EXPECTED (estimate): ~1.5-3 s/frame. The 10-frame clip `speed-test-10` + a log line
+# "SECONDS_PER_FRAME=<x>" decide whether the optimization is worth the lost DOF.
+# If the clip is blank/black, the browser path is wrong (see the --browser-executable note below).
+name: Manjhi optimized speed test (10 frames)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  speed-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browsers
+        # Full Playwright Chromium is the PROVEN WebGL path (the Remotion headless shell could
+        # not create a WebGL context on our VM; full Chrome with --gl swangle works). Install
+        # both; the render uses the Playwright Chrome explicitly.
+        run: |
+          npx playwright install --with-deps chromium
+          npx remotion browser ensure
+
+      - name: Install ffmpeg (ffprobe)
+        # The first Manjhi speed test FAILED here: ubuntu-latest has NO ffprobe, and the
+        # render step below calls it (exit 127) even though the render itself finished.
+        # Install BEFORE any ffprobe/ffmpeg call.
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Render frames 0-9
+        env:
+          REMOTION_TMP: ${{ runner.temp }}/remotion-tmp
+        run: |
+          CHROME=$(find ~/.cache/ms-playwright -name chrome -type f | head -1)
+          echo "Chrome: $CHROME"
+          mkdir -p out
+          START=$(date +%s)
+          npx remotion render src/index.ts ManjhiShort out/speed-test-10.mp4 \
+            --codec h264 --crf 16 --scale 1.0 --frames=0-9 --gl swangle --overwrite \
+            --browser-executable="$CHROME"
+          END=$(date +%s)
+          SECONDS=$((END - START))
+          echo "RENDER_SECONDS=$SECONDS for 10 frames"
+          echo "SECONDS_PER_FRAME=$(python3 -c "print(round($SECONDS/10, 2))")"
+          ffprobe -v error -show_entries stream=width,height,r_frame_rate,nb_frames,duration \
+            -of default=noprint_wrappers=1 out/speed-test-10.mp4
+
+      - name: Blank check (frames must vary, not one flat colour)
+        # A blank render has YDIF ~ 0 (no change between frames). Prints YAVG/YDIF per frame;
+        # YDIF must be clearly > 0. The clip itself is also uploaded for a visual check.
+        run: |
+          ffmpeg -i out/speed-test-10.mp4 -vf signalstats -f null - 2>&1 | grep -o "YAVG:[0-9.]* YDIF:[0-9.]*" | head -5
+
+      - name: Upload 10-frame clip
+        uses: actions/upload-artifact@v4
+        with:
+          name: speed-test-10
+          path: out/speed-test-10.mp4
+          retention-days: 1
