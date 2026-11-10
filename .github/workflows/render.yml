@@ -1,0 +1,71 @@
+# Manjhi 3D short — OPTIMIZED copy — FULL render on GitHub Actions (20 parallel jobs)
+# RUN ONLY AFTER the optimized speed test (render-speed-test.yml) has measured the per-frame seconds.
+# Shard math: 1,254 frames / 20 jobs = 63 frames/job (shard 19 renders 57: 1197-1253).
+# Expected at ~2 s/frame: ~2-4 min wall per job. If the speed test shows the browser renders
+# BLANK, fix the browser step first — do not run this.
+# After all 20 jobs finish: download the 20 `part-N` artifacts and run scripts/merge-parts.sh
+# locally (concat -> mux audio/mix.wav -> QA). No step here uploads the finished video.
+name: Manjhi optimized full render (20 shards)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browsers
+        run: |
+          npx playwright install --with-deps chromium
+          npx remotion browser ensure
+
+      - name: Install ffmpeg (ffprobe)
+        # ubuntu-latest has NO ffprobe; the render step below calls it (the first Manjhi
+        # speed test failed with exit 127 for exactly this). Install BEFORE any ffprobe call.
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Render shard ${{ matrix.shard }}
+        env:
+          REMOTION_TMP: ${{ runner.temp }}/remotion-tmp
+        run: |
+          CHROME=$(find ~/.cache/ms-playwright -name chrome -type f | head -1)
+          echo "Chrome: $CHROME"
+          SHARD=${{ matrix.shard }}
+          START=$((SHARD * 63))
+          END=$((START + 62))
+          if [ $END -gt 1253 ]; then END=1253; fi
+          FRAMES=$((END - START + 1))
+          echo "Shard $SHARD: frames $START-$END ($FRAMES frames)"
+          mkdir -p out
+          T0=$(date +%s)
+          npx remotion render src/index.ts ManjhiShort out/part-$SHARD.mp4 \
+            --codec h264 --crf 16 --scale 1.0 --frames=$START-$END --gl swangle --overwrite \
+            --browser-executable="$CHROME"
+          T1=$(date +%s)
+          SECONDS=$((T1 - T0))
+          echo "Shard $SHARD: RENDER_SECONDS=$SECONDS for $FRAMES frames"
+          echo "Shard $SHARD: SECONDS_PER_FRAME=$(python3 -c "print(round($SECONDS/$FRAMES, 2))")"
+          ffprobe -v error -show_entries stream=width,height,nb_frames,duration \
+            -of default=noprint_wrappers=1 out/part-$SHARD.mp4
+
+      - name: Upload shard clip
+        uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.shard }}
+          path: out/part-${{ matrix.shard }}.mp4
+          retention-days: 1
